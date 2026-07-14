@@ -1,0 +1,12 @@
+# Dependencies
+node_modules/
+
+# Build artifacts (main.js is committed for release, but keep maps/logs out)
+*.js.map
+*.log
+
+# OS
+.DS_Store
+
+# Editor
+.vscode/

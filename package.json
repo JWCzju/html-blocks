@@ -1,0 +1,32 @@
+{
+    "name": "html-blocks",
+    "version": "1.0.0",
+    "description": "Render live HTML, CSS and JavaScript directly in your notes with html-block code fences, each isolated in its own Shadow DOM.",
+    "main": "main.js",
+    "scripts": {
+        "dev": "node esbuild.config.mjs",
+        "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    },
+    "keywords": [
+        "obsidian",
+        "obsidian-plugin"
+    ],
+    "author": "Yinno",
+    "license": "MIT",
+    "devDependencies": {
+        "@types/node": "^16.11.6",
+        "@typescript-eslint/eslint-plugin": "5.29.0",
+        "@typescript-eslint/parser": "5.29.0",
+        "builtin-modules": "3.3.0",
+        "esbuild": "0.19.11",
+        "obsidian": "latest",
+        "tslib": "2.4.0",
+        "typescript": "4.7.4"
+    },
+    "dependencies": {
+        "@codemirror/lang-html": "^6.4.5",
+        "@codemirror/language": "^6.8.0",
+        "@codemirror/state": "^6.2.1",
+        "@codemirror/view": "^6.18.1"
+    }
+}
