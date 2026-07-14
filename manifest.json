@@ -2,7 +2,7 @@
 	"id": "html-blocks",
 	"name": "HTML Blocks",
 	"version": "1.0.0",
-	"minAppVersion": "1.5.0",
+	"minAppVersion": "1.7.2",
 	"description": "Render live HTML, CSS and JavaScript directly in your notes with html-block code fences, each isolated in its own Shadow DOM.",
 	"author": "Yinno",
 	"authorUrl": "https://github.com/JWCzju",
