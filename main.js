@@ -38,18 +38,9 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
     // Inspect mode state
     this.inspectMode = false;
     this.inspectLeaf = null;
-    this.inspectStyleEl = null;
     this.escHandler = null;
   }
   async onload() {
-    this.inspectStyleEl = document.createElement("style");
-    this.inspectStyleEl.id = "html-card-inspect-style";
-    this.inspectStyleEl.textContent = `
-            .cm-editor:not(.cm-focused) .cm-selectionBackground {
-                background-color: rgba(37, 99, 235, 0.25) !important;
-            }
-        `;
-    document.head.appendChild(this.inspectStyleEl);
     this.registerMarkdownCodeBlockProcessor("html-block", (source, el, ctx) => {
       this.processHtmlCard(source, el, ctx);
     });
@@ -141,10 +132,7 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
       return;
     await new Promise((r) => setTimeout(r, 150));
     embedEl.empty();
-    embedEl.style.display = "block";
-    embedEl.style.height = "auto";
-    embedEl.style.maxHeight = "none";
-    embedEl.style.overflow = "visible";
+    embedEl.classList.add("html-block-embed");
     try {
       const content = await this.app.vault.read(file);
       const container = embedEl.createDiv({ cls: "html-card-container" });
@@ -536,7 +524,7 @@ ${code}`
     return this.inspectLeaf;
   }
   onunload() {
-    var _a, _b;
+    var _a;
     (_a = this.observer) == null ? void 0 : _a.disconnect();
     this.observer = null;
     this.embedGuards.forEach((g) => g.disconnect());
@@ -545,6 +533,5 @@ ${code}`
     if (this.escHandler) {
       document.removeEventListener("keydown", this.escHandler);
     }
-    (_b = this.inspectStyleEl) == null ? void 0 : _b.remove();
   }
 };

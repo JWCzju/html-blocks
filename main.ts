@@ -9,19 +9,8 @@ export default class HtmlCardPlugin extends Plugin {
     // Inspect mode state
     private inspectMode = false;
     private inspectLeaf: WorkspaceLeaf | null = null;
-    private inspectStyleEl: HTMLStyleElement | null = null;
 
     async onload() {
-        // 0. Inject global CSS: show selection highlight in unfocused editors (for inspect mode)
-        this.inspectStyleEl = document.createElement('style');
-        this.inspectStyleEl.id = 'html-card-inspect-style';
-        this.inspectStyleEl.textContent = `
-            .cm-editor:not(.cm-focused) .cm-selectionBackground {
-                background-color: rgba(37, 99, 235, 0.25) !important;
-            }
-        `;
-        document.head.appendChild(this.inspectStyleEl);
-
         // 1. Code block processors:
         //    ```html-block  → rendered (primary, documented syntax)
         //    ```html card   → rendered (legacy shorthand, kept for backward compat)
@@ -136,10 +125,7 @@ export default class HtmlCardPlugin extends Plugin {
         await new Promise(r => setTimeout(r, 150));
 
         embedEl.empty();
-        embedEl.style.display = 'block';
-        embedEl.style.height = 'auto';
-        embedEl.style.maxHeight = 'none';
-        embedEl.style.overflow = 'visible';
+        embedEl.classList.add('html-block-embed');
 
         try {
             const content = await this.app.vault.read(file);
@@ -246,7 +232,11 @@ export default class HtmlCardPlugin extends Plugin {
         if (sourceFilePath) hostEl.dataset.sourceFile = sourceFilePath;
         if (lineOffset !== undefined) hostEl.dataset.lineOffset = String(lineOffset);
 
-        // 1. Reset + inspect styles
+        // 1. Reset + inspect styles.
+        // These styles MUST live inside the Shadow DOM to scope them to this
+        // block only — a styles.css file loads into the main document and cannot
+        // reach into the shadow tree, so createElement('style') is required here.
+        // eslint-disable-next-line obsidianmd/no-forbidden-elements
         const style = document.createElement('style');
         style.textContent = `
             :host {
@@ -463,6 +453,12 @@ export default class HtmlCardPlugin extends Plugin {
                 // `document` → proxy, `shadowRoot`/`rootNode` → the shadow tree.
                 // Each card gets its own Function scope, so top-level vars are
                 // isolated between cards (no global-namespace collisions).
+                //
+                // Executing user-authored inline scripts is the core purpose of
+                // this plugin (like Dataview JS / Templater). Only inline code the
+                // user wrote in their own note runs here — no remote code is ever
+                // fetched or executed. See the Security section in the README.
+                // eslint-disable-next-line obsidianmd/rule-custom-message
                 const fn = new Function(
                     'document', 'shadowRoot', 'rootNode',
                     `"use strict";\n${code}`
@@ -587,6 +583,5 @@ export default class HtmlCardPlugin extends Plugin {
         if (this.escHandler) {
             document.removeEventListener('keydown', this.escHandler);
         }
-        this.inspectStyleEl?.remove();
     }
 }

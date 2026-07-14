@@ -1,0 +1,14 @@
+/* Inspect mode: show text selection highlight even in unfocused editors,
+   so hovering a rendered element visibly scrolls/selects its source line. */
+.cm-editor:not(.cm-focused) .cm-selectionBackground {
+    background-color: rgba(37, 99, 235, 0.25) !important;
+}
+
+/* Override Obsidian's default embed sizing so rendered HTML blocks
+   expand to their natural height instead of a fixed iframe box. */
+.internal-embed.html-block-embed {
+    display: block;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+}
