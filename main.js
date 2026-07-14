@@ -30,56 +30,9 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
 
 // scriptRunner.ts
-function makeDocumentProxy(shadow) {
-  const realDoc = document;
-  const scoped = {
-    getElementById: (id) => {
-      var _a;
-      return shadow.getElementById ? shadow.getElementById(id) : shadow.querySelector(`#${((_a = window.CSS) == null ? void 0 : _a.escape) ? CSS.escape(id) : id}`);
-    },
-    querySelector: (sel) => shadow.querySelector(sel),
-    querySelectorAll: (sel) => shadow.querySelectorAll(sel),
-    getElementsByClassName: (cls) => shadow.querySelectorAll("." + cls.split(/\s+/).filter(Boolean).join(".")),
-    getElementsByTagName: (tag) => shadow.querySelectorAll(tag)
-  };
-  return new Proxy(realDoc, {
-    get(target, prop) {
-      if (typeof prop === "string" && prop in scoped) {
-        return scoped[prop];
-      }
-      const value = target[prop];
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-    set(target, prop, value) {
-      target[prop] = value;
-      return true;
-    }
-  });
-}
 function runShadowScripts(shadow) {
-  const docProxy = makeDocumentProxy(shadow);
-  const scripts = Array.from(shadow.querySelectorAll("script"));
-  for (const old of scripts) {
-    if (old.hasAttribute("src")) {
-      old.remove();
-      continue;
-    }
-    const code = old.textContent;
-    old.remove();
-    if (!code)
-      continue;
-    try {
-      const fn = new Function(
-        "document",
-        "shadowRoot",
-        "rootNode",
-        `"use strict";
-${code}`
-      );
-      fn.call(window, docProxy, shadow, shadow);
-    } catch (e) {
-      console.error("[html-blocks] script execution error:", e);
-    }
+  for (const el of Array.from(shadow.querySelectorAll("script"))) {
+    el.remove();
   }
 }
 
