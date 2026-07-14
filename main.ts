@@ -1,4 +1,5 @@
 import { Plugin, MarkdownPostProcessorContext, TFile, WorkspaceLeaf } from 'obsidian';
+import { runShadowScripts } from './scriptRunner';
 
 export default class HtmlCardPlugin extends Plugin {
     private observer: MutationObserver | null = null;
@@ -233,12 +234,12 @@ export default class HtmlCardPlugin extends Plugin {
         if (lineOffset !== undefined) hostEl.dataset.lineOffset = String(lineOffset);
 
         // 1. Reset + inspect styles.
-        // These styles MUST live inside the Shadow DOM to scope them to this
-        // block only — a styles.css file loads into the main document and cannot
-        // reach into the shadow tree, so createElement('style') is required here.
-        // eslint-disable-next-line obsidianmd/no-forbidden-elements
-        const style = document.createElement('style');
-        style.textContent = `
+        // These styles MUST be scoped to THIS block's Shadow DOM (a styles.css
+        // file loads into the main document and can't reach the shadow tree).
+        // We use a constructable stylesheet via adoptedStyleSheets rather than a
+        // <style> element, so no element is created/attached.
+        const sheet = new CSSStyleSheet();
+        (sheet as CSSStyleSheet & { replaceSync(text: string): void }).replaceSync(`
             :host {
                 display: block; width: 100%; background-color: white; color: black;
                 font-family: Times, serif; font-size: 16px; line-height: normal;
@@ -279,8 +280,8 @@ export default class HtmlCardPlugin extends Plugin {
                 outline-offset: 1px;
                 background: rgba(231, 76, 60, 0.06) !important;
             }
-        `;
-        shadow.appendChild(style);
+        `);
+        (shadow as ShadowRoot & { adoptedStyleSheets: CSSStyleSheet[] }).adoptedStyleSheets = [sheet];
 
         // 2. Inject data-source-line (skip style/script blocks)
         const lines = source.split('\n');
@@ -302,19 +303,22 @@ export default class HtmlCardPlugin extends Plugin {
             (_, open, css, close) => open + css.replace(/:root\b/g, ':host') + close
         );
 
-        // 4. Inject
-        const template = document.createElement('template');
-        template.innerHTML = processedSource;
-        shadow.appendChild(template.content.cloneNode(true));
+        // 4. Inject. Parse with DOMParser (no innerHTML). Parsed <script> nodes
+        //    are inert — they only run if the full build's runShadowScripts
+        //    re-creates them; the store build strips them instead.
+        const parsed = new DOMParser().parseFromString(processedSource, 'text/html');
+        for (const node of Array.from(parsed.head.childNodes)) {
+            shadow.appendChild(node);
+        }
+        for (const node of Array.from(parsed.body.childNodes)) {
+            shadow.appendChild(node);
+        }
 
-        // 5. Execute scripts inside a per-card scope.
-        //    Scripts run with a `document` proxy whose element-lookup methods
-        //    (getElementById / querySelector / ...) resolve against THIS card's
-        //    shadowRoot, so inline code like `document.getElementById('x')` finds
-        //    nodes that live in the shadow tree. Everything else falls through to
-        //    the real document. Each card executes in its own Function scope, so
-        //    top-level vars in one card never collide with another card.
-        this.executeScripts(shadow);
+        // 5. Run any inline <script> in the block, scoped to its Shadow DOM.
+        //    This is delegated to scriptRunner (full build) / scriptRunner.store
+        //    (store build). The store build is a no-op stub, since the community
+        //    store forbids dynamic code execution. See PUBLISHING.md.
+        runShadowScripts(shadow);
 
         // 6. Inspect mode: hover → scroll source, click → persist
         //    Skip for .html files (can't open as editable source in Obsidian)
@@ -380,93 +384,6 @@ export default class HtmlCardPlugin extends Plugin {
         hostEl.addEventListener('click', handleInspectClick, true);
         if (embedParent) {
             embedParent.addEventListener('click', handleInspectClick, true);
-        }
-    }
-
-    // ========================
-    // Script execution (per-card sandbox)
-    // ========================
-
-    /**
-     * Build a `document` proxy for a card. Element-lookup methods resolve against
-     * the card's shadowRoot; everything else falls through to the real document.
-     * This lets inline scripts that use bare `document.getElementById(...)` find
-     * nodes that actually live inside the shadow tree.
-     */
-    private makeDocumentProxy(shadow: ShadowRoot): Document {
-        const realDoc = document;
-        // Methods that should look *inside* the shadow tree instead of the page.
-        const scoped: Record<string, (...args: any[]) => any> = {
-            getElementById: (id: string) =>
-                shadow.getElementById
-                    ? shadow.getElementById(id)
-                    : shadow.querySelector(`#${(window as any).CSS?.escape ? CSS.escape(id) : id}`),
-            querySelector: (sel: string) => shadow.querySelector(sel),
-            querySelectorAll: (sel: string) => shadow.querySelectorAll(sel),
-            getElementsByClassName: (cls: string) =>
-                shadow.querySelectorAll('.' + cls.split(/\s+/).filter(Boolean).join('.')),
-            getElementsByTagName: (tag: string) => shadow.querySelectorAll(tag),
-        };
-
-        return new Proxy(realDoc, {
-            get(target, prop: string | symbol) {
-                if (typeof prop === 'string' && prop in scoped) {
-                    return scoped[prop];
-                }
-                const value = (target as any)[prop];
-                // Bind functions to the real document so `this` stays valid
-                // (createElement, addEventListener, head/body access, etc.).
-                return typeof value === 'function' ? value.bind(target) : value;
-            },
-            set(target, prop: string | symbol, value) {
-                (target as any)[prop] = value;
-                return true;
-            },
-        }) as unknown as Document;
-    }
-
-    /**
-     * Execute every inline <script> in the shadow tree. Scripts run in an isolated
-     * Function scope with a scoped `document` proxy, so element lookups resolve
-     * against this card's shadowRoot. Each card gets its own scope, so top-level
-     * vars never collide between cards.
-     *
-     * Only inline scripts (the code the user wrote in the note) are executed.
-     * External scripts (`<script src="...">`) are intentionally NOT fetched or run:
-     * loading and executing remote code would be a security risk and is disallowed.
-     */
-    private executeScripts(shadow: ShadowRoot) {
-        const docProxy = this.makeDocumentProxy(shadow);
-        const scripts = Array.from(shadow.querySelectorAll('script'));
-
-        for (const old of scripts) {
-            // Skip external scripts — remote code is never fetched or executed.
-            if (old.hasAttribute('src')) {
-                old.remove();
-                continue;
-            }
-            const code = old.textContent;
-            old.remove();
-            if (!code) continue;
-
-            try {
-                // `document` → proxy, `shadowRoot`/`rootNode` → the shadow tree.
-                // Each card gets its own Function scope, so top-level vars are
-                // isolated between cards (no global-namespace collisions).
-                //
-                // Executing user-authored inline scripts is the core purpose of
-                // this plugin (like Dataview JS / Templater). Only inline code the
-                // user wrote in their own note runs here — no remote code is ever
-                // fetched or executed. See the Security section in the README.
-                // eslint-disable-next-line obsidianmd/rule-custom-message
-                const fn = new Function(
-                    'document', 'shadowRoot', 'rootNode',
-                    `"use strict";\n${code}`
-                );
-                fn.call(window, docProxy, shadow, shadow);
-            } catch (e) {
-                console.error('[html-blocks] script execution error:', e);
-            }
         }
     }
 

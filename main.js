@@ -28,6 +28,62 @@ __export(main_exports, {
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian = require("obsidian");
+
+// scriptRunner.ts
+function makeDocumentProxy(shadow) {
+  const realDoc = document;
+  const scoped = {
+    getElementById: (id) => {
+      var _a;
+      return shadow.getElementById ? shadow.getElementById(id) : shadow.querySelector(`#${((_a = window.CSS) == null ? void 0 : _a.escape) ? CSS.escape(id) : id}`);
+    },
+    querySelector: (sel) => shadow.querySelector(sel),
+    querySelectorAll: (sel) => shadow.querySelectorAll(sel),
+    getElementsByClassName: (cls) => shadow.querySelectorAll("." + cls.split(/\s+/).filter(Boolean).join(".")),
+    getElementsByTagName: (tag) => shadow.querySelectorAll(tag)
+  };
+  return new Proxy(realDoc, {
+    get(target, prop) {
+      if (typeof prop === "string" && prop in scoped) {
+        return scoped[prop];
+      }
+      const value = target[prop];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    set(target, prop, value) {
+      target[prop] = value;
+      return true;
+    }
+  });
+}
+function runShadowScripts(shadow) {
+  const docProxy = makeDocumentProxy(shadow);
+  const scripts = Array.from(shadow.querySelectorAll("script"));
+  for (const old of scripts) {
+    if (old.hasAttribute("src")) {
+      old.remove();
+      continue;
+    }
+    const code = old.textContent;
+    old.remove();
+    if (!code)
+      continue;
+    try {
+      const fn = new Function(
+        "document",
+        "shadowRoot",
+        "rootNode",
+        `"use strict";
+${code}`
+      );
+      fn.call(window, docProxy, shadow, shadow);
+    } catch (e) {
+      console.error("[html-blocks] script execution error:", e);
+    }
+  }
+}
+
+// main.ts
 var HtmlCardPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
@@ -230,8 +286,8 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
       hostEl.dataset.sourceFile = sourceFilePath;
     if (lineOffset !== void 0)
       hostEl.dataset.lineOffset = String(lineOffset);
-    const style = document.createElement("style");
-    style.textContent = `
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`
             :host {
                 display: block; width: 100%; background-color: white; color: black;
                 font-family: Times, serif; font-size: 16px; line-height: normal;
@@ -272,8 +328,8 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
                 outline-offset: 1px;
                 background: rgba(231, 76, 60, 0.06) !important;
             }
-        `;
-    shadow.appendChild(style);
+        `);
+    shadow.adoptedStyleSheets = [sheet];
     const lines = source.split("\n");
     let inBlock = false;
     const taggedLines = lines.map((line, i) => {
@@ -295,10 +351,14 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
       /(<style[^>]*>)([\s\S]*?)(<\/style>)/gi,
       (_, open, css, close) => open + css.replace(/:root\b/g, ":host") + close
     );
-    const template = document.createElement("template");
-    template.innerHTML = processedSource;
-    shadow.appendChild(template.content.cloneNode(true));
-    this.executeScripts(shadow);
+    const parsed = new DOMParser().parseFromString(processedSource, "text/html");
+    for (const node of Array.from(parsed.head.childNodes)) {
+      shadow.appendChild(node);
+    }
+    for (const node of Array.from(parsed.body.childNodes)) {
+      shadow.appendChild(node);
+    }
+    runShadowScripts(shadow);
     const sourceFile = sourceFilePath || "";
     if (sourceFile.endsWith(".html") || sourceFile.endsWith(".htm"))
       return;
@@ -356,77 +416,6 @@ var HtmlCardPlugin = class extends import_obsidian.Plugin {
     hostEl.addEventListener("click", handleInspectClick, true);
     if (embedParent) {
       embedParent.addEventListener("click", handleInspectClick, true);
-    }
-  }
-  // ========================
-  // Script execution (per-card sandbox)
-  // ========================
-  /**
-   * Build a `document` proxy for a card. Element-lookup methods resolve against
-   * the card's shadowRoot; everything else falls through to the real document.
-   * This lets inline scripts that use bare `document.getElementById(...)` find
-   * nodes that actually live inside the shadow tree.
-   */
-  makeDocumentProxy(shadow) {
-    const realDoc = document;
-    const scoped = {
-      getElementById: (id) => {
-        var _a;
-        return shadow.getElementById ? shadow.getElementById(id) : shadow.querySelector(`#${((_a = window.CSS) == null ? void 0 : _a.escape) ? CSS.escape(id) : id}`);
-      },
-      querySelector: (sel) => shadow.querySelector(sel),
-      querySelectorAll: (sel) => shadow.querySelectorAll(sel),
-      getElementsByClassName: (cls) => shadow.querySelectorAll("." + cls.split(/\s+/).filter(Boolean).join(".")),
-      getElementsByTagName: (tag) => shadow.querySelectorAll(tag)
-    };
-    return new Proxy(realDoc, {
-      get(target, prop) {
-        if (typeof prop === "string" && prop in scoped) {
-          return scoped[prop];
-        }
-        const value = target[prop];
-        return typeof value === "function" ? value.bind(target) : value;
-      },
-      set(target, prop, value) {
-        target[prop] = value;
-        return true;
-      }
-    });
-  }
-  /**
-   * Execute every inline <script> in the shadow tree. Scripts run in an isolated
-   * Function scope with a scoped `document` proxy, so element lookups resolve
-   * against this card's shadowRoot. Each card gets its own scope, so top-level
-   * vars never collide between cards.
-   *
-   * Only inline scripts (the code the user wrote in the note) are executed.
-   * External scripts (`<script src="...">`) are intentionally NOT fetched or run:
-   * loading and executing remote code would be a security risk and is disallowed.
-   */
-  executeScripts(shadow) {
-    const docProxy = this.makeDocumentProxy(shadow);
-    const scripts = Array.from(shadow.querySelectorAll("script"));
-    for (const old of scripts) {
-      if (old.hasAttribute("src")) {
-        old.remove();
-        continue;
-      }
-      const code = old.textContent;
-      old.remove();
-      if (!code)
-        continue;
-      try {
-        const fn = new Function(
-          "document",
-          "shadowRoot",
-          "rootNode",
-          `"use strict";
-${code}`
-        );
-        fn.call(window, docProxy, shadow, shadow);
-      } catch (e) {
-        console.error("[html-blocks] script execution error:", e);
-      }
     }
   }
   // ========================
