@@ -10,3 +10,6 @@ node_modules/
 
 # Editor
 .vscode/
+
+# Obsidian plugin user data (never publish)
+data.json
